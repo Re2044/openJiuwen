@@ -1,21 +1,22 @@
 from openai import OpenAI
-from data_access import DataAccessor, TaskData
+from data_access import TasksRepository, TaskData, TaskEstimate, APIService
 import os
 import constants
 
-data_accessor = DataAccessor()
+data_accessor = TasksRepository()
 
 tasks = data_accessor.task_data_array
 
-print(tasks)
-
-client = OpenAI(
-    base_url="https://api.neuraldeep.ru/v1",
-    api_key=os.getenv(constants.API_KEY),
+api_service = APIService(
+    base_url=os.getenv("LLM_BASE_URL"),
+    api_key=os.getenv("LLM_API_KEY"),
 )
 
-r = client.chat.completions.create(
-    model="qwen3.6-35b-a3b",
-    messages=[{"role": "user", "content": "Привет!"}],
-)
-print(r.choices[0].message.content)
+task_estimates = []
+judge_model = constants.JUDGE_MODEL_NAME
+
+for task in tasks:
+    for model_name in constants.MODEL_NAME_LIST:
+        task_estimate = api_service.EstimateTask(judge_model, task.instruction, model_name)
+        task_estimates.append(e)
+
