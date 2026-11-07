@@ -40,11 +40,11 @@ class APIService:
     
 
     def EstimateTask(self, judge_model, instruction, model_name):
-        resp = client.chat.completions.parse(
+        resp = self.client.chat.completions.parse(
             model=judge_model,
             messages=[
                 {"role": "system", "content": constants.SYSTEM},
-                {"role": "user", "content": f"Task: {task.instruction}\nModel: {model_name}"},
+                {"role": "user", "content": f"Task: {instruction}\nModel: {model_name}"},
             ],
             response_format=TaskEstimate,
             temperature=0,
@@ -65,3 +65,4 @@ class TaskEstimate(BaseModel):
     success_percent: int = Field(description="Chance of completing the task, 0-100")
     tokens: int = Field(description="Total input+output tokens expected")
     seconds: int = Field(description="Wall-clock time expected, in seconds")
+    reward: int
