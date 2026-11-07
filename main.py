@@ -1,6 +1,13 @@
 from openai import OpenAI
+from data_access import DataAccessor, TaskData
 import os
 import constants
+
+data_accessor = DataAccessor()
+
+tasks = data_accessor.task_data_array
+
+print(tasks)
 
 client = OpenAI(
     base_url="https://api.neuraldeep.ru/v1",
