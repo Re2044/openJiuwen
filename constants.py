@@ -1,1 +1,2 @@
 API_KEY="neuraldeep_api_key"
+MODEL_LIST=["qwen3.8-27b","qwen3.8-27b-noreason","qwen3.6-35b-a3b","qwen3.6-35b-a3b-noreason"]
