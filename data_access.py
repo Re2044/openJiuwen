@@ -2,7 +2,7 @@ from dataclasses import dataclass
 import os
 import json
 from pydantic import BaseModel, Field
-import constants
+import config
 from openai import OpenAI
 
 
@@ -43,7 +43,7 @@ class APIService:
         resp = self.client.chat.completions.parse(
             model=judge_model,
             messages=[
-                {"role": "system", "content": constants.SYSTEM},
+                {"role": "system", "content": config.SYSTEM},
                 {"role": "user", "content": f"Task: {instruction}\nModel: {model_name}"},
             ],
             response_format=TaskEstimate,
@@ -63,7 +63,6 @@ class TaskData:
 
 class TaskEstimate(BaseModel):
     model_name: str
-    success_percent: int = Field(description="Chance of completing the task, 0-100")
     tokens: int = Field(description="Total input+output tokens expected")
     seconds: int = Field(description="Wall-clock time expected, in seconds")
     reward: int

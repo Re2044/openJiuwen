@@ -5,7 +5,7 @@ TIME_LIMIT_IN_SECONDS=1000
 SYSTEM = (
     "You estimate how a given LLM would perform on a task. "
     "Given a task description and a model name, return:"
-    "the probability (0-100) that it completes the task successfully, "
-    "the expected total token usage, and the expected wall-clock time in seconds. "
+    "The expected total token usage, and the expected wall-clock time in seconds. "
+    "If the task with given tools cannot be completed return (-1,-1)"
     "Give your best single-number estimates; never return ranges."
 )
