@@ -1,0 +1,6 @@
+# Allow-list: example tasks hold reference answers and must not reach the image.
+*
+!requirements.txt
+!run_agent.py
+!harness/
+**/__pycache__
