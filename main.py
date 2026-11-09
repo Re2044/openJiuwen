@@ -1,14 +1,37 @@
 from openai import OpenAI
+from data_access import TasksRepository, TaskData, TaskEstimate, APIService
+from dp import DP
 import os
-import constants
+import config
+from dotenv import load_dotenv
 
-client = OpenAI(
-    base_url="https://api.neuraldeep.ru/v1",
-    api_key=os.getenv(constants.API_KEY),
+data_accessor = TasksRepository()
+
+load_dotenv()
+
+tasks = data_accessor.task_data_array
+
+api_service = APIService(
+    base_url=os.getenv("LLM_BASE_URL"),
+    api_key=os.getenv("LLM_API_KEY"),
 )
 
-r = client.chat.completions.create(
-    model="qwen3.6-35b-a3b",
-    messages=[{"role": "user", "content": "Привет!"}],
-)
-print(r.choices[0].message.content)
+budget_in_tokens = int(os.getenv("BUDGET"))
+
+task_estimates = []
+judge_model = config.JUDGE_MODEL_NAME
+
+for task in tasks:
+    for model_name in config.MODEL_NAME_LIST:
+        task_estimate = api_service.EstimateTask(judge_model, task.instruction, model_name, budget_in_tokens)
+
+        if task_estimate.tokens == -1 or task_estimate.seconds == -1:
+            continue
+        
+        task_estimate.model_name = model_name
+        task_estimate.reward = task.reward
+        task_estimates.append(task_estimate)
+
+
+dp = DP()
+res = dp.calc(budget_in_tokens, config.TIME_LIMIT_IN_SECONDS, task_estimates)
