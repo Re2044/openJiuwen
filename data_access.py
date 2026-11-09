@@ -39,7 +39,7 @@ class APIService:
         )
     
 
-    def EstimateTask(self, judge_model, instruction, model_name):
+    def EstimateTask(self, judge_model, instruction, model_name, budget_in_tokens):
         resp = self.client.chat.completions.parse(
             model=judge_model,
             messages=[
@@ -50,8 +50,9 @@ class APIService:
             temperature=0,
         )
 
-        return resp.choices[0].message.parsed
+        budget_in_tokens = budget_in_tokens - resp.usage.total_tokens
 
+        return resp.choices[0].message.parsed
 
 @dataclass
 class TaskData:

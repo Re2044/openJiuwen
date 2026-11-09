@@ -23,7 +23,7 @@ judge_model = constants.JUDGE_MODEL_NAME
 
 for task in tasks:
     for model_name in constants.MODEL_NAME_LIST:
-        task_estimate = api_service.EstimateTask(judge_model, task.instruction, model_name)
+        task_estimate = api_service.EstimateTask(judge_model, task.instruction, model_name, budget_in_tokens)
         task_estimate.model_name = model_name
         task_estimate.reward = task.reward
         task_estimates.append(task_estimate)
