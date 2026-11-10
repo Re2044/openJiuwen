@@ -6,6 +6,7 @@ call, and openJiuwen's stock tools cost about 2800 input tokens per call.
 import asyncio
 import logging
 import os
+import re
 import sys
 import tempfile
 import uuid
@@ -46,7 +47,11 @@ SYSTEM_PROMPT = (
     "You solve one small task with tools. Be brief and do not explain.\n"
     "bash runs a command in the task's working directory; prefer one command that computes the result.\n"
     "submit records the final answer and ends the task. Pass only the bare value, for example 42 or Osaka, "
-    "or DONE when the task asks for that. Use submit instead of writing answer.txt yourself."
+    "or DONE when the task asks for that. Write whole numbers without a decimal point. Use submit instead of "
+    "writing answer.txt yourself.\n"
+    "give_up ends the task without an answer. Use it only when the task cannot be solved in principle: a file, "
+    "column, person or number it needs is missing, or the tests contradict each other. Check that first, do not "
+    "guess an answer, and never give up just because a task is hard."
 )
 MAX_TOOL_OUTPUT_CHARS = 2000
 # Signs in a failed call that this model is not available to the key, as opposed to the proxy being down.
@@ -99,6 +104,15 @@ class Attempt:
     calls: int = 0
     llm_error: bool = False
     model_unavailable: bool = False
+    gave_up: bool = False  # the model declared the task unsolvable
+
+
+def normalize_answer(answer, check):
+    """Tidy an answer before it is checked: drop quotes, and for integer answers a trailing '.0'."""
+    answer = str(answer).strip().strip("`'\"").strip()
+    if check == "exact_int" and re.fullmatch(r"[-+]?\d+\.0*", answer):
+        answer = answer.split(".")[0]  # 5322.0 is the right number in the wrong format
+    return answer
 
 
 def truncate(text, limit=MAX_TOOL_OUTPUT_CHARS):
@@ -199,7 +213,7 @@ class MeterRail(AgentRail):
 
     async def after_tool_call(self, ctx: AgentCallbackContext):
         # Ending right after an accepted answer skips a closing model call that would resend the whole context.
-        if isinstance(ctx.inputs, ToolCallInputs) and self.attempt.submitted:
+        if isinstance(ctx.inputs, ToolCallInputs) and (self.attempt.submitted or self.attempt.gave_up):
             ctx.request_force_finish({"output": "", "result_type": "submitted"})
 
 
@@ -243,9 +257,12 @@ async def solve_task(task, model_name, workdir, guard, store, ledger, base_url, 
     attempt = Attempt(task_id=task.task_id, model=model_name)
 
     async def accept(answer):
-        answer = str(answer).strip()
+        answer = normalize_answer(answer, task.check)
         if not answer:
             return "Not accepted: the answer is empty."
+        if task.check == "exact_int" and not re.fullmatch(r"[-+]?\d+", answer):
+            log.info("%s: answer rejected, not a whole number: %s", task.task_id, answer[:60])
+            return "Not accepted: the answer must be one whole number, for example 42."
         if task.check == "unittest":
             failures = await guard.failures()
             if failures is not None:
@@ -270,12 +287,19 @@ async def solve_task(task, model_name, workdir, guard, store, ledger, base_url, 
     async def submit(answer: str) -> str:
         return await accept(answer)
 
+    @tool(name="give_up", description="End the task without an answer because it cannot be solved in principle: "
+                                      "needed data is missing or the tests contradict each other.")
+    async def give_up(reason: str) -> str:
+        attempt.gave_up = True
+        log.info("%s: gave up: %s", task.task_id, " ".join(str(reason).split())[:150])
+        return "Task closed without an answer."
+
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as agent_home:
         agent = create_deep_agent(
             build_model(base_url, api_key, model_name),
             card=AgentCard(id=f"{task.task_id}-{uuid.uuid4().hex[:8]}", name="task_solver"),
             workspace=agent_home,  # DeepAgent keeps its own files here, away from the task folder
-            tools=[bash, submit],
+            tools=[bash, submit, give_up],
             rails=[MeterRail(attempt, ledger, cost_allowance)],
             system_prompt=SYSTEM_PROMPT,
             max_iterations=config.SOLVER_MAX_ITERATIONS,
@@ -304,6 +328,6 @@ async def solve_task(task, model_name, workdir, guard, store, ledger, base_url, 
 
     # The instructions ask for answer.txt, so a model may write it itself instead of calling submit.
     written = workdir / "answer.txt"
-    if not attempt.submitted and written.is_file():
+    if not attempt.submitted and not attempt.gave_up and written.is_file():
         await accept(written.read_text(encoding="utf-8", errors="replace"))
     return attempt

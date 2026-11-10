@@ -2,6 +2,15 @@ JUDGE_MODEL_NAME="qwen3.6-35b-a3b-noreason"
 MODEL_NAME_LIST=["qwen3.8-27b","qwen3.8-27b-noreason","qwen3.6-35b-a3b","qwen3.6-35b-a3b-noreason"]
 TIME_LIMIT_IN_SECONDS=3600
 
+# Planning. False: take cost, time and success per task type and model from estimates.json (free, measured).
+# True: ask JUDGE_MODEL_NAME about every task and model, which costs tokens and time.
+USE_JUDGE=False
+# Tasks run in parallel, so the plan may use TIME_LIMIT_IN_SECONDS x PARALLEL_SESSIONS session-seconds;
+# this share of it is planned, the rest is left as a margin.
+TIME_SAFETY_SHARE=0.9
+DP_TIME_BUCKETS=300  # the plan counts time in this many steps, which keeps the DP table small
+DP_REWARD_SCALE=4  # expected reward (reward x success) is rounded to 1/4 of a point
+
 SYSTEM = (
     "You estimate how a given LLM would perform on a task. "
     "Given a task description and a model name, return:"
@@ -27,3 +36,6 @@ LLM_ERROR_RETRIES=1  # repeats of an attempt that failed on a model call error
 RATE_LIMIT_MAX_WAITS=12  # waits per model call before giving up
 RATE_LIMIT_DEFAULT_WAIT_SECONDS=5  # when the proxy does not say how long
 RATE_LIMIT_MAX_WAIT_SECONDS=90
+
+# One line per solved task: models tried, cost, time, outcome. Input for calibrate.py.
+TRAJECTORIES_FILE="trajectories.jsonl"

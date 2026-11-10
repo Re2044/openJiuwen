@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import tempfile
+import time
 from pathlib import Path
 
 import config
@@ -52,6 +53,7 @@ class Executor:
         self.ledger = Ledger(budget)
         self.store = AnswerStore(out)
         self.scratch = Path(tempfile.mkdtemp(prefix="solver-"))
+        self.gave_up = 0  # tasks the model declared unsolvable
 
     async def run(self, plan):
         """plan: list of (task, estimate) pairs. Returns a summary dict."""
@@ -75,12 +77,13 @@ class Executor:
             "planned": len(plan),
             "answered": len(solved),
             "reward_if_all_correct": sum(task.reward for task in solved),
+            "gave_up": self.gave_up,
             "solving_cost": round(self.ledger.spent, 1),
             "model_calls": self.ledger.calls,
         }
-        log.info("solving done: %d/%d answered, reward %d if all answers are correct, cost %.0f in %d calls",
-                 summary["answered"], summary["planned"], summary["reward_if_all_correct"], self.ledger.spent,
-                 self.ledger.calls)
+        log.info("solving done: %d/%d answered, %d declared unsolvable, reward %d if all answers are correct, "
+                 "cost %.0f in %d calls", summary["answered"], summary["planned"], self.gave_up,
+                 summary["reward_if_all_correct"], self.ledger.spent, self.ledger.calls)
         return summary
 
     async def solve(self, task, estimate):
@@ -93,6 +96,7 @@ class Executor:
         models = [estimate.model_name] + [m for m in config.FALLBACK_MODELS if m != estimate.model_name]
         spent = 0.0
         attempts_made = 0
+        history = []  # one entry per attempt, written to the trajectories file
         try:
             for model in models:
                 if model in self.unavailable:
@@ -105,13 +109,22 @@ class Executor:
                         return False
                     log.info("%s: start with %s (estimated %d tokens, reward %d)", task.task_id, model,
                              estimate.tokens, task.reward)
+                    started = time.monotonic()
                     attempt = await solve_task(task, model, workdir, guard, self.store, self.ledger, self.base_url,
                                                self.api_key, config.TASK_COST_CAP - spent)
                     spent += attempt.cost
-                    log.info("%s: %s with %s, %d calls, cost %.0f", task.task_id,
-                             "answered" if attempt.submitted else "no answer", model, attempt.calls, attempt.cost)
+                    history.append({"model": model, "cost": round(attempt.cost, 1), "calls": attempt.calls,
+                                    "seconds": round(time.monotonic() - started, 1), "submitted": attempt.submitted,
+                                    "gave_up": attempt.gave_up, "llm_error": attempt.llm_error})
+                    outcome = "answered" if attempt.submitted else "gave up" if attempt.gave_up else "no answer"
+                    log.info("%s: %s with %s, %d calls, cost %.0f", task.task_id, outcome, model, attempt.calls,
+                             attempt.cost)
                     if attempt.submitted:
                         return True
+                    if attempt.gave_up:
+                        # The model checked and found the task unsolvable: a second model would only spend more.
+                        self.gave_up += 1
+                        return False
                     if attempt.model_unavailable:
                         self.unavailable.add(model)
                         attempts_made -= 1
@@ -125,3 +138,13 @@ class Executor:
             return False
         finally:
             guard.restore()
+            self._record(task, estimate, history)
+
+    def _record(self, task, estimate, history):
+        record = {"task_id": task.task_id, "task_type": task.task_type, "reward": task.reward,
+                  "estimated_cost": estimate.tokens, "attempts": history}
+        try:
+            with open(config.TRAJECTORIES_FILE, "a", encoding="utf-8") as stream:
+                stream.write(json.dumps(record) + "\n")
+        except OSError as err:
+            log.warning("cannot write %s: %s", config.TRAJECTORIES_FILE, err)

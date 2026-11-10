@@ -1,0 +1,22 @@
+{
+  "source": "run of 2026-11-10 on task-dir-final (80 tasks solved), read from main.log; solvable tasks only",
+  "note": "cost and seconds are medians per task; success counts answers that were right apart from number formatting; n is the number of tasks",
+  "types": {
+    "math": {
+      "qwen3.6-35b-a3b": {"cost": 786, "seconds": 11, "success": 1.0, "n": 16},
+      "qwen3.6-35b-a3b-noreason": {"cost": 390, "seconds": 4, "success": 1.0, "n": 5}
+    },
+    "data_analysis": {
+      "qwen3.6-35b-a3b": {"cost": 579, "seconds": 11, "success": 1.0, "n": 16},
+      "qwen3.6-35b-a3b-noreason": {"cost": 328, "seconds": 90, "success": 1.0, "n": 3}
+    },
+    "search": {
+      "qwen3.6-35b-a3b": {"cost": 816, "seconds": 16, "success": 1.0, "n": 16},
+      "qwen3.6-35b-a3b-noreason": {"cost": 461, "seconds": 4, "success": 1.0, "n": 1}
+    },
+    "coding": {
+      "qwen3.6-35b-a3b": {"cost": 1217, "seconds": 9, "success": 1.0, "n": 1},
+      "qwen3.6-35b-a3b-noreason": {"cost": 1164, "seconds": 26, "success": 1.0, "n": 6}
+    }
+  }
+}

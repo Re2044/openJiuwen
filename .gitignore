@@ -225,3 +225,5 @@ __marimo__/
 # Run output
 solutions.json
 task-dir-final-run/
+trajectories.jsonl
+main.log
