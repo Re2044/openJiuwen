@@ -1,0 +1,9 @@
+{
+  "task_id": "coding_0031",
+  "task_type": "coding",
+  "instruction": "Run `python3 test_mylib.py` in the current directory; some tests fail. Fix the bugs in mylib.py (do not edit the tests) until all tests pass. Work only inside the current directory. When you are done, write ONLY the word DONE to the file answer.txt in the current directory (for example with bash: echo 42 > answer.txt).",
+  "reward": 4,
+  "check": "unittest",
+  "expected": "tests_pass",
+  "hidden_tests": "import unittest\n\nimport mylib as m\n\n\nclass T(unittest.TestCase):\n    def test_factorial_hidden(self):\n        self.assertEqual(m.factorial(0), 1)\n        self.assertEqual(m.factorial(6), 720)\n\n    def test_minimum_hidden(self):\n        self.assertEqual(m.minimum([-3, -8]), -8)\n        self.assertEqual(m.minimum([2]), 2)\n\n    def test_first_n_hidden(self):\n        self.assertEqual(m.first_n([1, 2], 5), [1, 2])\n        self.assertEqual(m.first_n([1, 2, 3], 0), [])\n\n    def test_maximum_hidden(self):\n        self.assertEqual(m.maximum([-5, -2, -9]), -2)\n        self.assertEqual(m.maximum([7]), 7)\n\n\nif __name__ == '__main__':\n    unittest.main()\n"
+}

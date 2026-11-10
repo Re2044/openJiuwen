@@ -1,0 +1,9 @@
+{
+  "task_id": "coding_0020",
+  "task_type": "coding",
+  "instruction": "Run `python3 test_mylib.py` in the current directory; some tests fail. Fix the bugs in mylib.py (do not edit the tests) until all tests pass. Work only inside the current directory. When you are done, write ONLY the word DONE to the file answer.txt in the current directory (for example with bash: echo 42 > answer.txt).",
+  "reward": 2,
+  "check": "unittest",
+  "expected": "tests_pass",
+  "hidden_tests": "import unittest\n\nimport mylib as m\n\n\nclass T(unittest.TestCase):\n    def test_unique_sorted_hidden(self):\n        self.assertEqual(m.unique_sorted([]), [])\n        self.assertEqual(m.unique_sorted([5, 5]), [5])\n\n    def test_first_n_hidden(self):\n        self.assertEqual(m.first_n([1, 2], 5), [1, 2])\n        self.assertEqual(m.first_n([1, 2, 3], 0), [])\n\n    def test_count_even_hidden(self):\n        self.assertEqual(m.count_even([]), 0)\n        self.assertEqual(m.count_even([0, -2, 3]), 2)\n\n    def test_total_hidden(self):\n        self.assertEqual(m.total([]), 0)\n        self.assertEqual(m.total([-1, 5]), 4)\n\n    def test_count_vowels_hidden(self):\n        self.assertEqual(m.count_vowels(''), 0)\n        self.assertEqual(m.count_vowels('xyz'), 0)\n\n\nif __name__ == '__main__':\n    unittest.main()\n"
+}

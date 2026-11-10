@@ -1,0 +1,8 @@
+{
+  "task_id": "math_0082",
+  "task_type": "math",
+  "instruction": "A warehouse starts with 1665 boxes. Then the stock is split equally into 3 warehouses and it keeps one share (rounded down). It ships 23 boxes per day for 3 days. Then the stock is doubled by merging with a sister warehouse. How many boxes does it have at the end? Compute it with the bash tool (python3 -c). Work only inside the current directory. When you are done, write ONLY the final answer to the file answer.txt in the current directory (for example with bash: echo 42 > answer.txt).",
+  "reward": 4,
+  "check": "exact_int",
+  "expected": "972"
+}
