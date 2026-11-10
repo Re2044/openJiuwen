@@ -221,3 +221,7 @@ __marimo__/
 
 # VS Code
 .vscode/
+
+# Run output
+solutions.json
+task-dir-final-run/

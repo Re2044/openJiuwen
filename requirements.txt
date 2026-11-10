@@ -1,3 +1,5 @@
 openai
 openjiuwen
 workswarm
+python-dotenv
+numpy

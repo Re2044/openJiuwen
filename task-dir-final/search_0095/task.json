@@ -1,0 +1,8 @@
+{
+  "task_id": "search_0095",
+  "task_type": "search",
+  "instruction": "The directory kb/ contains a small knowledge base of markdown files. In which city is the headquarters of the employer of Pavel Kim's mentor? Use the file tools or bash (ls, grep, cat) to find it. Work only inside the current directory. When you are done, write ONLY the final answer to the file answer.txt in the current directory (for example with bash: echo 42 > answer.txt).",
+  "reward": 2,
+  "check": "exact_str",
+  "expected": "Tallinn"
+}
