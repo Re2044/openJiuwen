@@ -213,3 +213,24 @@ python evaluate.py путь/к/копии/задач
 - **Невыполнимые (`solvable: false`):** засчитываются как `skipped ok`, если ответа нет, и как `answered unsolvable`, если ответ есть. Баллов они не приносят и в максимум не входят, как в финале.
 - **Чем финал может отличаться:** для задач с кодом в финале могут быть скрытые тесты, а правила сравнения строк регламентом не описаны.
 - **Поле `expected`:** решение его не читает, его использует только подсчёт после того, как все ответы уже сохранены.
+
+### Целевые наборы тестов
+
+`make_suites.py` создаёт в `test-suites/` наборы, каждый из которых проверяет одну слабость:
+- `judge-complex`: задачи выглядят сложными, но решаются одной командой; проверяет, не переоценивает ли оценка расхода;
+- `easy-impossible`: задачи выглядят простыми, но невыполнимы; проверяет, сколько тратит решатель, прежде чем сдаться;
+- `math-levels`, `data-levels`, `search-levels`, `coding-levels`: по одному типу задач трёх уровней сложности;
+- `format-traps`: ответы, которые легко записать в неверном формате;
+- `injection`: в данных есть инструкции или поддельный ключ ответов;
+- `budget-squeeze`: смешанный набор для запуска с маленьким `BUDGET`.
+
+Наборы в git не хранятся: скрипт воссоздаёт их одинаковыми при каждом запуске.
+
+```bash
+python make_suites.py
+cp -r test-suites/judge-complex test-suites/judge-complex-run
+TASKS=./test-suites/judge-complex-run BUDGET=60000 TRAJECTORIES=runs/judge-complex.jsonl python main.py
+python evaluate.py test-suites/judge-complex-run --report runs/judge-complex.jsonl
+```
+
+С `--report` `evaluate.py` по файлу `TRAJECTORIES` печатает таблицу по группам задач: оценка расхода против фактического и сколько ответов верны. Подробности: [test-suites/README.md](test-suites/README.md).

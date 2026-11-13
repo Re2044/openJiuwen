@@ -1,6 +1,8 @@
 """Scores a finished run the way the final check does, on tasks that carry reference answers (`expected`).
 
-Usage: python evaluate.py [tasks dir]   (default: ./task-dir)
+Usage: python evaluate.py [tasks dir] [--report trajectories.jsonl]   (default: ./task-dir)
+With --report it also compares the planned cost estimates with what solving took, per group of tasks, from the
+file a run writes when TRAJECTORIES is set (see estimate_table).
 main.py also calls score_tasks() at the end of a run. Solving never reads these scoring fields.
 
 Rules, by the task's `check` field:
@@ -13,6 +15,7 @@ final run, and is left out of the maximum.
 A task without `expected` (other than unittest) cannot be scored here and is left out of the maximum.
 """
 import json
+import statistics
 import shutil
 import subprocess
 import sys
@@ -102,11 +105,83 @@ def summary_line(report):
     return line
 
 
+def _group(meta):
+    """Group label: task type plus the suite labels from make_suites.py, or solvable/unsolvable."""
+    kind = meta.get("trap") or meta.get("difficulty") or ("unsolvable" if meta.get("solvable") is False else "solvable")
+    return f"{meta.get('task_type', '?')}/{kind}"
+
+
+def read_trajectories(path):
+    """Rows of a TRAJECTORIES file merged per task: a task tried again in the second pass has two rows."""
+    tasks = {}
+    for line in Path(path).read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        row = json.loads(line)
+        task = tasks.setdefault(row["task_id"], {"estimated_cost": row["estimated_cost"], "actual_cost": 0.0,
+                                                  "answered": False, "rows": 0})
+        task["actual_cost"] += row["actual_cost"]
+        task["answered"] = task["answered"] or row["answered"]
+        task["rows"] += 1
+    return tasks
+
+
+def estimate_table(tasks_dir, trajectories):
+    """Lines comparing the planned cost estimate of each task with what solving it cost, per group of tasks.
+
+    trajectories: the result of read_trajectories. Groups are the task type plus the labels make_suites.py
+    puts in task.json (trap or difficulty), or solvable/unsolvable.
+    n: tasks in the group; tried: tasks the run worked on (planned, or picked up in the second pass).
+    est / actual: median cost per task in budget units (output tokens + input tokens / 10).
+    ratio: estimated / actual cost per task, median over the group; above 1 the estimate is too high.
+    in 2x: share of tried tasks whose estimate is between half and double the actual cost.
+    right: tasks answered correctly, or left unanswered when unsolvable.
+    """
+    groups = {}
+    for task_json in sorted(Path(tasks_dir).glob("*/task.json")):
+        meta = json.loads(task_json.read_text(encoding="utf-8"))
+        g = groups.setdefault(_group(meta), {"n": 0, "tried": 0, "answered": 0, "est": [], "actual": [],
+                                             "ratio": [], "right": 0})
+        g["n"] += 1
+        g["right"] += check_task(task_json.parent)[0] in (CORRECT, SKIPPED_OK)
+        row = trajectories.get(meta["task_id"])
+        if row is None:
+            continue
+        g["tried"] += 1
+        g["answered"] += row["answered"]
+        g["est"].append(row["estimated_cost"])
+        g["actual"].append(row["actual_cost"])
+        if row["actual_cost"] > 0:
+            g["ratio"].append(row["estimated_cost"] / row["actual_cost"])
+
+    def med(values, fmt="{:.0f}"):
+        return fmt.format(statistics.median(values)) if values else "-"
+
+    lines = [f"{'group':<30} {'n':>3} {'tried':>5} {'est':>6} {'actual':>6} {'ratio':>6} {'in 2x':>6} "
+             f"{'answered':>8} {'right':>6}"]
+    for name, g in sorted(groups.items()):
+        within = f"{sum(0.5 <= r <= 2 for r in g['ratio']) / len(g['ratio']):.0%}" if g["ratio"] else "-"
+        lines.append(f"{name:<30} {g['n']:>3} {g['tried']:>5} {med(g['est']):>6} {med(g['actual']):>6} "
+                     f"{med(g['ratio'], '{:.2f}'):>6} {within:>6} {g['answered']:>8} "
+                     f"{str(g['right']) + '/' + str(g['n']):>6}")
+    return lines
+
+
 def main():
-    report = score_tasks(sys.argv[1] if len(sys.argv) > 1 else "task-dir")
+    args = sys.argv[1:]
+    report_path = None
+    if "--report" in args:
+        at = args.index("--report")
+        report_path = args[at + 1]
+        del args[at:at + 2]
+    report = score_tasks(args[0] if args else "task-dir")
     for r in report["tasks"]:
         print(f"{r['task_id']:<22} {r['status']:<20} {r['points']}/{r['reward']}  {r['detail']}")
     print("\n" + summary_line(report))
+    if report_path:
+        print()
+        for line in estimate_table(args[0] if args else "task-dir", read_trajectories(report_path)):
+            print(line)
 
 
 if __name__ == "__main__":

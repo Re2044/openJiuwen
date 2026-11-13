@@ -175,9 +175,20 @@ def is_refusal(answer):
     return bool(REFUSAL.search(answer))
 
 
-def normalize_answer(answer):
-    """Trim the answer; a whole number written as a float (3570.0) becomes 3570, which is what the check expects."""
+# "Founded: 1962" printed by `grep Founded file` is the line of the file, not the answer: the value follows the label.
+LABELED = re.compile(r"([A-Za-z][A-Za-z _-]{0,30}):\s+(\S.*)")
+# Output of a failed command that still exited 0, for example through a pipe: never an answer.
+SHELL_ERROR = re.compile(r"^(?:grep|cat|ls|sed|awk|cut|head|tail|find|xargs|python3?|bash|sh): |No such file or directory"
+                         r"|command not found|Traceback \(most recent call last\)|Permission denied", re.IGNORECASE)
+
+
+def normalize_answer(answer, labeled_ok=False):
+    """Trim the answer; a whole number written as a float (3570.0) becomes 3570, which is what the check expects,
+    and a "Label: value" line becomes the value unless labeled_ok."""
     answer = str(answer).strip()
+    match = None if labeled_ok else LABELED.fullmatch(answer)
+    if match:
+        answer = match.group(2).strip()
     if re.fullmatch(r"[-+]?\d+\.0+", answer):
         answer = answer.split(".")[0]
     return answer
@@ -406,7 +417,10 @@ async def solve_task(task, model_name, workdir, guard, store, ledger, base_url, 
     attempt = Attempt(task_id=task.task_id, model=model_name)
 
     async def accept(answer, from_command=False):
-        answer = normalize_answer(answer)
+        if SHELL_ERROR.search(str(answer)):  # e.g. "grep: kb/x.md: No such file or directory" taken from a pipe
+            return (f"Not taken as the answer, the command failed: {str(answer).strip()[:150]}\n"
+                    "Fix the command, or give_up if the data does not contain the value.")
+        answer = normalize_answer(answer, labeled_ok=task.check == "unittest")
         if not answer:
             return "Not accepted: the answer is empty."
         if is_refusal(answer):

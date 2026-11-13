@@ -401,6 +401,7 @@ def write(tasks, out_dir):
             meta["solvable"] = False
         if task.hidden_tests:
             meta["hidden_tests"] = task.hidden_tests
+        meta.update(getattr(task, "extra", {}))  # labels added by make_suites.py, e.g. suite and difficulty
         (folder / "task.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         for name, text in task.files.items():
             path = folder / "workspace" / name
