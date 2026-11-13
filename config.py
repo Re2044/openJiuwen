@@ -37,5 +37,9 @@ RATE_LIMIT_MAX_WAITS=12  # waits per model call before giving up
 RATE_LIMIT_DEFAULT_WAIT_SECONDS=5  # when the proxy does not say how long
 RATE_LIMIT_MAX_WAIT_SECONDS=90
 
+# Models whose name contains one of these answer without reasoning. Used when a model has no measurements
+# in estimates.json and its estimate is borrowed from measured models of the same kind.
+NO_REASONING_MARKERS=("-noreason", "deepseek-chat")
+
 # One line per solved task: models tried, cost, time, outcome. Input for calibrate.py.
 TRAJECTORIES_FILE="trajectories.jsonl"

@@ -40,6 +40,7 @@ from openjiuwen.harness.factory import create_deep_agent  # noqa: E402
 import config  # noqa: E402
 import ratelimit  # noqa: E402
 import shell  # noqa: E402
+from shell import run_command  # noqa: E402
 
 log = logging.getLogger(__name__)
 
@@ -120,24 +121,6 @@ def truncate(text, limit=MAX_TOOL_OUTPUT_CHARS):
         return text
     head = limit // 4
     return f"{text[:head]}\n...[{len(text) - limit} chars cut]...\n{text[-(limit - head):]}"
-
-
-async def run_command(argv, cwd, timeout):
-    """Run a command; the return code is None on timeout. The proxy key is not passed to it."""
-    env = {k: v for k, v in os.environ.items() if k not in ("LLM_API_KEY", "LLM_BASE_URL")}
-    env["PYTHONDONTWRITEBYTECODE"] = "1"
-    proc = await asyncio.create_subprocess_exec(*argv, cwd=cwd, env=env, stdout=asyncio.subprocess.PIPE,
-                                                stderr=asyncio.subprocess.STDOUT)
-    try:
-        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout)
-    except asyncio.TimeoutError:
-        proc.kill()
-        await proc.wait()
-        return None, f"timed out after {timeout}s"
-    except asyncio.CancelledError:
-        proc.kill()
-        raise
-    return proc.returncode, stdout.decode("utf-8", errors="replace")
 
 
 def task_workdir(task, scratch_root):

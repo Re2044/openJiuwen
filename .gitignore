@@ -227,3 +227,4 @@ solutions.json
 task-dir-final-run/
 trajectories.jsonl
 main.log
+.env.deepseek

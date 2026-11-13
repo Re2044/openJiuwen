@@ -10,7 +10,11 @@ from types import SimpleNamespace
 import config
 from dotenv import load_dotenv
 
-load_dotenv()
+# ENV_FILE picks another settings file, e.g. .env.deepseek for a run on a different provider.
+env_file = os.getenv("ENV_FILE")
+if env_file and not os.path.isfile(env_file):
+    sys.exit(f"ENV_FILE points to {env_file}, which does not exist")
+load_dotenv(env_file or None)
 
 # LOG_LEVEL=DEBUG also shows every task loaded and the token usage of each judge call.
 logging.basicConfig(
@@ -22,7 +26,7 @@ logging.basicConfig(
 for noisy in ("httpx", "httpx2", "httpcore", "openai"):
     logging.getLogger(noisy).setLevel(logging.WARNING)
 log = logging.getLogger("main")
-log.info("started, log file %s", os.path.abspath("main.log"))
+log.info("started, log file %s, settings from %s", os.path.abspath("main.log"), env_file or ".env")
 
 data_accessor = TasksRepository()
 
@@ -46,7 +50,9 @@ if os.getenv("PARALLEL_SESSIONS"):
 # MODELS in .env limits the run to these models, e.g. the ones a free plan includes.
 if os.getenv("MODELS"):
     config.MODEL_NAME_LIST = [model.strip() for model in os.getenv("MODELS").split(",") if model.strip()]
-    config.FALLBACK_MODELS = [model for model in config.FALLBACK_MODELS if model in config.MODEL_NAME_LIST]
+    # Fallbacks stay within the allowed models; for another provider's models that is the MODELS list itself.
+    config.FALLBACK_MODELS = ([model for model in config.FALLBACK_MODELS if model in config.MODEL_NAME_LIST]
+                              or list(config.MODEL_NAME_LIST))
     log.info("models limited by MODELS: %s", ", ".join(config.MODEL_NAME_LIST))
 
 # USE_JUDGE=1 in .env plans with the judge model instead of the estimates table, for comparison.

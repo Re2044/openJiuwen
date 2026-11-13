@@ -8,6 +8,8 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 
+import config
+
 log = logging.getLogger(__name__)
 TABLE_FILE = Path(__file__).with_name("estimates.json")
 
@@ -27,7 +29,8 @@ def _average(entries):
 
 
 def _reasons(model):
-    return not model.endswith("-noreason")
+    """Whether the model reasons before answering; estimates are borrowed between models of the same kind."""
+    return not any(marker in model for marker in config.NO_REASONING_MARKERS)
 
 
 class Estimator:
