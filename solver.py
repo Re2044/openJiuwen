@@ -69,6 +69,23 @@ SYSTEM_PROMPT = (
     "Never guess, never skip a broken step, and never answer 0, none or a sentence for something that is not there."
 )
 MAX_TOOL_OUTPUT_CHARS = 2000
+# Checks for one task type, added to that type's first message only. In test runs the agent answered every unsolvable
+# data task (a made-up "discount", 0 for REDACTED units) and spent most on search dead ends, so each check says what
+# "cannot be done" looks like for the type and to stop the moment it fails.
+TYPE_CHECKS = {
+    "data_analysis": "Before computing: every column the question needs must be in the CSV header, and its values "
+                     "must be numbers where you add or compare them. If a column is missing, or its values are "
+                     "missing, redacted or not numbers, call give_up at once; do not answer 0 and do not use another "
+                     "column instead.",
+    "search": "Before searching further: the person or company asked about must have its own file, and that file "
+              "must contain the field the question needs (or name the record that does). If the file is missing, "
+              "the field is absent, it points to a record that is not there, or two records disagree, call give_up "
+              "at once; do not look for the value elsewhere.",
+    "math": "Before computing: every quantity must be given as a number and every step must be defined. If any "
+            "amount is vague (some, several, a few) or a step divides by zero, call give_up at once.",
+    "coding": "If two tests demand different results for the same call, no code can pass them all: call give_up at "
+              "once instead of editing the code.",
+}
 # Signs in a failed call that this model is not available to the key, as opposed to the proxy being down.
 MODEL_UNAVAILABLE_MARKERS = ("Error code: 403", "Error code: 404", "PermissionDenied", "NotFoundError")
 
@@ -500,6 +517,8 @@ async def solve_task(task, model_name, workdir, guard, store, ledger, base_url, 
 
     # Everything the agent would otherwise spend its first calls on: the files, and for coding tasks the tests' output.
     query = f"{task.instruction}\n\nFiles:\n{workspace_context(workdir)}"
+    if config.TYPE_CHECKS and task.task_type in TYPE_CHECKS:
+        query += f"\n\nCheck: {TYPE_CHECKS[task.task_type]}"
     absent = precheck.absent_terms(task.instruction, workdir)
     if absent:
         query += "\n\nNote: found in no file: " + ", ".join(absent)

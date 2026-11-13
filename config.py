@@ -70,6 +70,7 @@ CONTEXT_MAX_CHARS=6000
 CONTEXT_MAX_FILES=20
 CONTEXT_HEAD_LINES=4
 FINAL_ANSWER_MAX_CHARS=200  # a longer output of a final command is not an answer
+TYPE_CHECKS=True  # add the task type's give-up check to the agent's first message (solver.TYPE_CHECKS)
 SOLVER_MAX_ITERATIONS=8  # agent steps per attempt
 # Output tokens per model call. In a 100-task run the largest call of a correctly solved task used 1012;
 # calls that hit the old limit of 2000 were all reasoning on unsolvable tasks.
