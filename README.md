@@ -61,6 +61,25 @@ python main.py
 
 Каждая подпапка в папке задач должна содержать `task.json` (поля `task_id`, `task_type`, `instruction`, `reward`) и, при необходимости, `workspace/` с файлами задачи.
 
+### Запуск в Docker, как на соревновании
+
+Точка входа — `run_agent.py`. Она принимает `--tasks-dir` и `--out` (они заменяют переменные `TASKS` и `OUT`) и запускает `main.py`. Остальные настройки берутся из переменных окружения.
+
+```bash
+docker build -t hack:latest .
+docker run --rm \
+  -e LLM_BASE_URL -e LLM_API_KEY -e BUDGET \
+  -v "$TASKS:/data/tasks:rw" \
+  --read-only --tmpfs /tmp:rw,size=2g -e HOME=/tmp \
+  --cap-drop ALL --security-opt no-new-privileges \
+  --workdir /app --entrypoint python \
+  hack:latest /app/run_agent.py --tasks-dir /data/tasks
+```
+
+- **Только чтение:** в контейнере `/app` доступна только для чтения. Поэтому лог `main.log` и файл решений по умолчанию пишутся в `/tmp`, если `OUT` не задан. Ответы пишутся в `answer.txt` в папке каждой решённой задачи; папка задач смонтирована на запись.
+- **Зависимости:** версии зафиксированы в `requirements.txt`, базовый образ — `python:3.12.10-slim`.
+- **Что не попадает в образ:** `.dockerignore` исключает `.env`, наборы задач и результаты прогонов, так что ключ API в образ не попадает.
+
 ## Параметры в `config.py`
 
 - `JUDGE_MODEL_NAME`: модель, которая оценивает задачи

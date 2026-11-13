@@ -5,23 +5,29 @@ import os
 import sys
 import time
 import logging
+import tempfile
 import config
 from workspace_summary import summarize
 from dotenv import load_dotenv
 
 load_dotenv()
 
+# Files the run writes (log, default solutions file) go to the working folder, or to the temp folder when the working
+# folder is read-only, as /app is in the competition container.
+RUN_DIR = os.getcwd() if os.access(os.getcwd(), os.W_OK) else tempfile.gettempdir()
+LOG_FILE = os.path.join(RUN_DIR, "main.log")
+
 # LOG_LEVEL=DEBUG also shows every task loaded and the token usage of each judge call.
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO").upper(),
     format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
     datefmt="%H:%M:%S",
-    handlers=[logging.StreamHandler(sys.stdout), logging.FileHandler("main.log", encoding="utf-8")],
+    handlers=[logging.StreamHandler(sys.stdout), logging.FileHandler(LOG_FILE, encoding="utf-8")],
 )
 for noisy in ("httpx", "httpx2", "httpcore", "openai"):
     logging.getLogger(noisy).setLevel(logging.WARNING)
 log = logging.getLogger("main")
-log.info("started, log file %s", os.path.abspath("main.log"))
+log.info("started, log file %s", LOG_FILE)
 
 data_accessor = TasksRepository()
 
@@ -127,7 +133,7 @@ executor = Executor(
     base_url=os.getenv("LLM_BASE_URL"),
     api_key=os.getenv("LLM_API_KEY"),
     budget=budget_in_tokens - api_service.cost,  # what the judge spent is gone already
-    out=os.getenv("OUT") or "solutions.json",
+    out=os.getenv("OUT") or os.path.join(RUN_DIR, "solutions.json"),
     unavailable_models=unavailable_models,
 )
 summary = asyncio.run(executor.run(plan))

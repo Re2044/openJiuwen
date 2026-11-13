@@ -1,0 +1,9 @@
+.git
+.venv
+.env
+*.log
+__pycache__
+solutions.json
+run_report.json
+task-dir*
+test-suites
