@@ -224,4 +224,8 @@ __marimo__/
 
 # Run output
 solutions.json
+run_report.json
 task-dir-final-run/
+# Suites made by make_suites.py (python make_suites.py recreates them); only their README is kept
+test-suites/*
+!test-suites/README.md

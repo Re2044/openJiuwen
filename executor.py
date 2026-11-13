@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import tempfile
+import time
 from pathlib import Path
 
 import config
@@ -52,6 +53,7 @@ class Executor:
         self.ledger = Ledger(budget)
         self.store = AnswerStore(out)
         self.scratch = Path(tempfile.mkdtemp(prefix="solver-"))
+        self.records = {}  # task id -> what solving it took, for the run report
 
     async def run(self, plan):
         """plan: list of (task, estimate) pairs. Returns a summary dict."""
@@ -64,6 +66,7 @@ class Executor:
         async def guarded(task, estimate):
             async with gate:
                 if self.ledger.exhausted:
+                    self.records[task.task_id] = {"outcome": "not started", "attempts": []}
                     log.warning("%s: not started, %s", task.task_id,
                                 "proxy stopped answering" if self.ledger.proxy_down else "budget exhausted")
                     return task, False
@@ -93,6 +96,7 @@ class Executor:
         models = [estimate.model_name] + [m for m in config.FALLBACK_MODELS if m != estimate.model_name]
         spent = 0.0
         attempts_made = 0
+        record = self.records[task.task_id] = {"outcome": "no answer", "attempts": []}
         try:
             for model in models:
                 if model in self.unavailable:
@@ -103,22 +107,36 @@ class Executor:
                 for retry in range(config.LLM_ERROR_RETRIES + 1):
                     if self.ledger.exhausted or spent >= config.TASK_COST_CAP:
                         return False
-                    log.info("%s: start with %s (estimated %d tokens, reward %d)", task.task_id, model,
+                    log.info("%s: start with %s (estimated cost %d, reward %d)", task.task_id, model,
                              estimate.tokens, task.reward)
+                    started = time.monotonic()
                     attempt = await solve_task(task, model, workdir, guard, self.store, self.ledger, self.base_url,
                                                self.api_key, config.TASK_COST_CAP - spent)
                     spent += attempt.cost
+                    record["attempts"].append({
+                        "model": model, "calls": attempt.calls, "cost": round(attempt.cost, 1),
+                        "input_tokens": attempt.input_tokens, "output_tokens": round(attempt.output_tokens),
+                        "seconds": round(time.monotonic() - started, 1), "submitted": attempt.submitted,
+                        "gave_up": attempt.gave_up, "llm_error": attempt.llm_error})
                     log.info("%s: %s with %s, %d calls, cost %.0f", task.task_id,
                              "answered" if attempt.submitted else "no answer", model, attempt.calls, attempt.cost)
                     if attempt.submitted:
+                        record["outcome"] = "answered"
                         return True
+                    if attempt.gave_up:
+                        record["outcome"] = "gave up"
+                        return False  # judged impossible: another model would pay to reach the same verdict
                     if attempt.model_unavailable:
                         self.unavailable.add(model)
                         attempts_made -= 1
                         log.warning("%s: %s is not available to this key, trying another model", task.task_id, model)
                         break
                     if not attempt.llm_error:
-                        break  # the model just did not solve it; a retry would cost the same for nothing
+                        # The model just did not solve it; a retry would cost the same for nothing. In test runs
+                        # a second model never rescued a solvable task this way, so by default stop here.
+                        if not config.FALLBACK_ON_NO_ANSWER:
+                            return False
+                        break
                     pause = 3 * (retry + 1)
                     log.warning("%s: model call failed, retrying in %ds", task.task_id, pause)
                     await asyncio.sleep(pause)

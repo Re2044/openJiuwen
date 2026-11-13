@@ -6,6 +6,7 @@ call, and openJiuwen's stock tools cost about 2800 input tokens per call.
 import asyncio
 import logging
 import os
+import re
 import sys
 import tempfile
 import uuid
@@ -39,6 +40,7 @@ from openjiuwen.harness.factory import create_deep_agent  # noqa: E402
 import config  # noqa: E402
 import ratelimit  # noqa: E402
 import shell  # noqa: E402
+from workspace_summary import warnings as workspace_warnings  # noqa: E402
 
 log = logging.getLogger(__name__)
 
@@ -46,9 +48,14 @@ SYSTEM_PROMPT = (
     "You solve one small task with tools. Be brief and do not explain.\n"
     "bash runs a command in the task's working directory; prefer one command that computes the result.\n"
     "submit records the final answer and ends the task. Pass only the bare value, for example 42 or Osaka, "
-    "or DONE when the task asks for that. Use submit instead of writing answer.txt yourself."
+    "or DONE when the task asks for that. Use submit instead of writing answer.txt yourself.\n"
+    "Some tasks cannot be done: a number, column, file or record they need is missing, or their requirements "
+    "contradict each other. Once you have checked that, call give_up instead of guessing; a wrong answer is worse "
+    "than none."
 )
 MAX_TOOL_OUTPUT_CHARS = 2000
+GIVE_UP_ANSWER = re.compile(r"^(give[ _]?up|cannot be (determined|computed)|unknown|n/?a|none)\b", re.IGNORECASE)
+INTEGRAL_FLOAT = re.compile(r"^-?\d+\.0+$")
 # Signs in a failed call that this model is not available to the key, as opposed to the proxy being down.
 MODEL_UNAVAILABLE_MARKERS = ("Error code: 403", "Error code: 404", "PermissionDenied", "NotFoundError")
 
@@ -94,8 +101,11 @@ class Attempt:
     task_id: str
     model: str
     submitted: bool = False
+    gave_up: bool = False  # the model judged the task impossible; no other model should try it
     answer: str = ""
     cost: float = 0.0
+    input_tokens: int = 0
+    output_tokens: int = 0  # reasoning included
     calls: int = 0
     llm_error: bool = False
     model_unavailable: bool = False
@@ -189,6 +199,8 @@ class MeterRail(AgentRail):
         self.ledger.charge(cost)
         self.attempt.cost += cost
         self.attempt.calls += 1
+        self.attempt.input_tokens += usage.input_tokens or 0
+        self.attempt.output_tokens += cost - (usage.input_tokens or 0) / 10
         log.info("%s [%s] call %d: %d in, %d out -> %.0f (task %.0f, run %.0f/%.0f)", self.attempt.task_id,
                  self.attempt.model, self.attempt.calls, usage.input_tokens, usage.output_tokens, cost,
                  self.attempt.cost, self.ledger.spent, self.ledger.budget)
@@ -198,9 +210,11 @@ class MeterRail(AgentRail):
         self.ledger.consecutive_llm_errors += 1
 
     async def after_tool_call(self, ctx: AgentCallbackContext):
-        # Ending right after an accepted answer skips a closing model call that would resend the whole context.
-        if isinstance(ctx.inputs, ToolCallInputs) and self.attempt.submitted:
-            ctx.request_force_finish({"output": "", "result_type": "submitted"})
+        # Ending right after an accepted answer or a give-up skips a closing model call that would resend the
+        # whole context.
+        if isinstance(ctx.inputs, ToolCallInputs) and (self.attempt.submitted or self.attempt.gave_up):
+            ctx.request_force_finish({"output": "", "result_type": "submitted" if self.attempt.submitted
+                                      else "gave_up"})
 
 
 class PatientModel(Model):
@@ -246,6 +260,14 @@ async def solve_task(task, model_name, workdir, guard, store, ledger, base_url, 
         answer = str(answer).strip()
         if not answer:
             return "Not accepted: the answer is empty."
+        if GIVE_UP_ANSWER.match(answer):  # a model that submits "give up" means give_up
+            attempt.gave_up = True
+            log.info("%s: gave up through submit: %s", task.task_id, answer[:60])
+            return "Recorded as give_up."
+        if task.check != "unittest" and answer.strip(".!").upper() == "DONE":  # DONE is only the coding answer
+            return "Not accepted: submit the value the task asks for, or call give_up if it cannot be found."
+        if INTEGRAL_FLOAT.match(answer):  # python prints sums of floats as 3570.0; integer checks need 3570
+            answer = answer.split(".")[0]
         if task.check == "unittest":
             failures = await guard.failures()
             if failures is not None:
@@ -257,25 +279,51 @@ async def solve_task(task, model_name, workdir, guard, store, ledger, base_url, 
         log.info("%s: answer accepted: %s", task.task_id, answer[:60])
         return "Accepted."
 
+    written = workdir / "answer.txt"
+
+    def answer_file_state():
+        try:
+            stat = written.stat()
+        except FileNotFoundError:
+            return None
+        return stat.st_mtime_ns, stat.st_size
+
+    seen_answer_file = answer_file_state()  # a file left by an earlier attempt is not a new answer
+
     @tool(name="bash", description="Run a bash command in the working directory and return its output.")
     async def bash(command: str) -> str:
+        nonlocal seen_answer_file
         log.info("%s: bash %s", task.task_id, " ".join(str(command).split())[:150])
         if "task.json" in command:
             return "Refused: task.json is not part of the task data."
         code, output = await run_command([shell.find_bash(), "-c", shell.PYTHON3_PREAMBLE + command], workdir,
                                          config.BASH_TIMEOUT_SECONDS)
-        return truncate(output) if code == 0 else f"exit code {code}\n{truncate(output)}"
+        result = truncate(output) if code == 0 else f"exit code {code}\n{truncate(output)}"
+        # Models often write answer.txt themselves, as the instructions say. Taking it as the answer right away
+        # saves the extra model call that would only repeat it through submit.
+        state = answer_file_state()
+        if config.ACCEPT_ANSWER_FILE and state is not None and state != seen_answer_file:
+            seen_answer_file = state
+            verdict = await accept(written.read_text(encoding="utf-8", errors="replace"))
+            result += f"\n[answer.txt: {verdict}]"
+        return result
 
     @tool(name="submit", description="Record the final answer and end the task.")
     async def submit(answer: str) -> str:
         return await accept(answer)
+
+    @tool(name="give_up", description="End the task without an answer because it cannot be done.")
+    async def give_up(reason: str) -> str:
+        attempt.gave_up = True
+        log.info("%s: gave up: %s", task.task_id, " ".join(str(reason).split())[:150])
+        return "Recorded."
 
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as agent_home:
         agent = create_deep_agent(
             build_model(base_url, api_key, model_name),
             card=AgentCard(id=f"{task.task_id}-{uuid.uuid4().hex[:8]}", name="task_solver"),
             workspace=agent_home,  # DeepAgent keeps its own files here, away from the task folder
-            tools=[bash, submit],
+            tools=[bash, submit, give_up],
             rails=[MeterRail(attempt, ledger, cost_allowance)],
             system_prompt=SYSTEM_PROMPT,
             max_iterations=config.SOLVER_MAX_ITERATIONS,
@@ -286,7 +334,15 @@ async def solve_task(task, model_name, workdir, guard, store, ledger, base_url, 
             enable_security_rail=False,
             enable_model_anomaly_detection_rail=False,
         )
-        inputs = {"query": task.instruction, "conversation_id": f"{task.task_id}-{uuid.uuid4().hex[:8]}"}
+        query = task.instruction
+        found = workspace_warnings(task.path, task.instruction) if config.SOLVER_WARNINGS else []
+        if found:
+            # A file scan found signs that the data is missing or withheld; saying so up front lets the agent check
+            # them and give up in a call or two instead of searching until its step limit.
+            query += ("\n\nNote from a scan of the task files before you started: " + " ".join(found) +
+                      " Check this first. If the data the task needs is really missing or withheld, call give_up.")
+            log.info("%s: warnings passed to the agent: %s", task.task_id, " ".join(found)[:200])
+        inputs = {"query": query, "conversation_id": f"{task.task_id}-{uuid.uuid4().hex[:8]}"}
         try:
             await asyncio.wait_for(agent.invoke(inputs), config.TASK_TIMEOUT_SECONDS)
         except asyncio.TimeoutError:
@@ -303,7 +359,6 @@ async def solve_task(task, model_name, workdir, guard, store, ledger, base_url, 
                             str(err)[:200])
 
     # The instructions ask for answer.txt, so a model may write it itself instead of calling submit.
-    written = workdir / "answer.txt"
-    if not attempt.submitted and written.is_file():
+    if not attempt.submitted and not attempt.gave_up and answer_file_state() not in (None, seen_answer_file):
         await accept(written.read_text(encoding="utf-8", errors="replace"))
     return attempt

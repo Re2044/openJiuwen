@@ -1,11 +1,12 @@
 from openai import OpenAI
-from data_access import TasksRepository, TaskData, TaskEstimate, APIService
+from data_access import TasksRepository, TaskData, TaskEstimate, APIService, estimate_from_verdict, is_reasoning_model
 from dp import DP
 import os
 import sys
 import time
 import logging
 import config
+from workspace_summary import summarize
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -32,7 +33,7 @@ api_service = APIService(
 )
 
 budget_in_tokens = int(os.getenv("BUDGET"))
-log.info("LLM endpoint %s, budget %d tokens, time limit %ds", os.getenv("LLM_BASE_URL"), budget_in_tokens,
+log.info("LLM endpoint %s, budget %d, time limit %ds", os.getenv("LLM_BASE_URL"), budget_in_tokens,
          config.TIME_LIMIT_IN_SECONDS)
 
 task_estimates = []
@@ -48,6 +49,10 @@ if os.getenv("MODELS"):
     log.info("models limited by MODELS: %s", ", ".join(config.MODEL_NAME_LIST))
 
 judge_model = config.JUDGE_MODEL_NAME
+if os.getenv("JUDGE_WORKSPACE_SUMMARY") == "0":  # e.g. to measure what the summary is worth
+    config.JUDGE_WORKSPACE_SUMMARY = False
+if os.getenv("SOLVER_WARNINGS") == "0":
+    config.SOLVER_WARNINGS = False
 estimate_labels = []  # task id of each entry in task_estimates, for the logs
 
 # The agent's commands need a working bash and python3; check before spending anything.
@@ -70,28 +75,33 @@ if judge_model not in available_models:
     sys.exit(2)
 model_names = [model for model in config.MODEL_NAME_LIST if model in available_models]
 
-total_calls = len(tasks) * len(model_names)
-log.info("estimating %d tasks x %d models = %d calls to judge %s", len(tasks), len(model_names),
-         total_calls, judge_model)
+log.info("estimating %d tasks with judge %s, one call per task, for models %s", len(tasks), judge_model,
+         ", ".join(model_names))
 estimation_started = time.monotonic()
-call_number = 0
-for task in tasks:
-    for model_name in model_names:
-        call_number += 1
-        log.info("[%d/%d] %s on %s: asking judge", call_number, total_calls, task.task_id, model_name)
-        task_estimate = api_service.EstimateTask(judge_model, task.instruction, model_name, budget_in_tokens)
-
-        if task_estimate.tokens == -1 or task_estimate.seconds == -1:
-            log.info("[%d/%d] judged infeasible, skipped (%.1fs)", call_number, total_calls,
-                     api_service.last_call_seconds)
-            continue
-        log.info("[%d/%d] estimate %d tokens, %d s (%.1fs, judge spent %.0f so far)", call_number, total_calls,
-                 task_estimate.tokens, task_estimate.seconds, api_service.last_call_seconds, api_service.cost)
-        
-        task_estimate.model_name = model_name
-        task_estimate.reward = task.reward
-        task_estimates.append(task_estimate)
+judge_estimates = {}  # task id -> the judge's verdict and the estimate per model, for the run report
+for number, task in enumerate(tasks, start=1):
+    workspace = summarize(task.path, task.instruction) if config.JUDGE_WORKSPACE_SUMMARY else None
+    verdict = api_service.JudgeTask(judge_model, task, workspace)
+    judged = judge_estimates[task.task_id] = {"verdict": verdict.model_dump() if verdict else None, "estimates": {},
+                                              "workspace": workspace}
+    if verdict is not None and verdict.solvable_probability < config.MIN_SOLVABLE_PROBABILITY:
+        log.info("[%d/%d] %s: judged unsolvable (p=%.2f), left out (%.1fs)", number, len(tasks), task.task_id,
+                 verdict.solvable_probability, api_service.last_call_seconds)
+        continue
+    models = model_names
+    if verdict is not None and verdict.needs_reasoning_model:
+        models = [m for m in model_names if is_reasoning_model(m)] or model_names
+    for model_name in models:
+        estimate = estimate_from_verdict(verdict, task.task_type, model_name)
+        judged["estimates"][model_name] = estimate
+        task_estimates.append(TaskEstimate(model_name=model_name, tokens=estimate["cost"],
+                                           seconds=estimate["seconds"], reward=task.reward))
         estimate_labels.append(task.task_id)
+    log.info("[%d/%d] %s: %s, %d steps%s, cost %s (%.1fs, judge spent %.0f so far)", number, len(tasks),
+             task.task_id, verdict.difficulty if verdict else "no verdict", estimate["steps"],
+             ", needs reasoning" if verdict is not None and verdict.needs_reasoning_model else "",
+             "/".join(str(e["cost"]) for e in judged["estimates"].values()), api_service.last_call_seconds,
+             api_service.cost)
 
 log.info("estimation done in %.0fs: %d usable estimates; judge spent %d input + %d output tokens = %.0f in "
          "competition units", time.monotonic() - estimation_started, len(task_estimates), api_service.input_tokens,
@@ -104,7 +114,7 @@ best_reward, chosen = res
 log.info("plan: total reward %s from %d estimates", best_reward, len(chosen))
 for index in chosen:
     estimate = task_estimates[index - 1]
-    log.info("  %s on %s: %d tokens, %d s, reward %d", estimate_labels[index - 1], estimate.model_name,
+    log.info("  %s on %s: cost %d, %d s, reward %d", estimate_labels[index - 1], estimate.model_name,
              estimate.tokens, estimate.seconds, estimate.reward)
 
 # Solve the planned tasks. Imported here because loading openJiuwen takes a few seconds.
@@ -124,6 +134,25 @@ summary = asyncio.run(executor.run(plan))
 log.info("finished: %s; total spent %.0f of %d (judge %.0f, solving %.0f)", summary,
          api_service.cost + summary["solving_cost"], budget_in_tokens, api_service.cost, summary["solving_cost"])
 
+# What the judge predicted next to what solving took, per task; evaluate.py compares them.
+import json
+from pathlib import Path
+
+planned = {estimate_labels[index - 1]: task_estimates[index - 1].model_name for index in chosen}
+run_report = {
+    "tasks_dir": data_accessor.path,
+    "budget": budget_in_tokens,
+    "judge": {"model": judge_model, "calls": api_service.calls, "input_tokens": api_service.input_tokens,
+              "output_tokens": api_service.output_tokens, "cost": round(api_service.cost, 1)},
+    "summary": summary,
+    "tasks": {task.task_id: {"reward": task.reward, "judge": judge_estimates[task.task_id],
+                             "planned_model": planned.get(task.task_id),
+                             "solve": executor.records.get(task.task_id)} for task in tasks},
+}
+report_path = executor.store.solutions_file.with_name("run_report.json")
+report_path.write_text(json.dumps(run_report, ensure_ascii=False, indent=1), encoding="utf-8")
+log.info("run report with the judge's estimates and actual costs: %s", report_path.resolve())
+
 # Score the saved answers the way the final check does. Only possible where task.json has `expected`,
 # as in the example tasks; answers are already saved, so this cannot change them. SCORE_RUN=0 turns it off.
 if os.getenv("SCORE_RUN", "1") != "0":
@@ -137,3 +166,7 @@ if os.getenv("SCORE_RUN", "1") != "0":
         log.info("score: %s", summary_line(report))
     else:
         log.info("score: no task has a reference answer, nothing to score")
+    from evaluate import estimate_table
+
+    for line in estimate_table(data_accessor.path, run_report):
+        log.info("%s", line)

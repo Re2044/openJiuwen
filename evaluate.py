@@ -1,6 +1,7 @@
 """Scores a finished run the way the final check does, on tasks that carry reference answers (`expected`).
 
-Usage: python evaluate.py [tasks dir]   (default: ./task-dir)
+Usage: python evaluate.py [tasks dir] [--report run_report.json]   (default: ./task-dir)
+With --report it also compares the judge's estimates with what solving took, per group of tasks (see estimate_table).
 main.py also calls score_tasks() at the end of a run. Solving never reads these scoring fields.
 
 Rules, by the task's `check` field:
@@ -13,6 +14,7 @@ final run, and is left out of the maximum.
 A task without `expected` (other than unittest) cannot be scored here and is left out of the maximum.
 """
 import json
+import statistics
 import shutil
 import subprocess
 import sys
@@ -102,11 +104,102 @@ def summary_line(report):
     return line
 
 
+def _group(meta):
+    """Group label: task type plus the suite labels from make_suites.py, or solvable/unsolvable."""
+    kind = meta.get("trap") or meta.get("difficulty") or ("unsolvable" if meta.get("solvable") is False else "solvable")
+    return f"{meta.get('task_type', '?')}/{kind}"
+
+
+def _judge_view(judge):
+    """(raw token estimate per model, cost estimate per model, step estimate, judged infeasible) from a report entry.
+
+    Reads both report formats: the old one with the judge's own token count per model ({model: {tokens, seconds}},
+    -1 meaning infeasible) and the current one ({"verdict": ..., "estimates": {model: {steps, tokens, cost}}}).
+    """
+    if "estimates" in judge:
+        estimates = judge["estimates"]
+        return ({m: e["tokens"] for m, e in estimates.items()}, {m: e["cost"] for m, e in estimates.items()},
+                next(iter(estimates.values()))["steps"] if estimates else None,
+                judge.get("verdict") is not None and not estimates)
+    tokens = {m: e["tokens"] for m, e in judge.items() if e["tokens"] != -1 and e["seconds"] != -1}
+    return tokens, {}, None, bool(judge) and not tokens
+
+
+def estimate_table(tasks_dir, run_report):
+    """Lines comparing the judge's estimates with what solving took, per group of tasks.
+
+    est tok / actual: median tokens (input + output) estimated for the planned model / used by solving. When a task
+    was not planned, the median estimate over models is taken.
+    ratio: estimated / actual tokens per task, median over the group; above 1 the judge overestimates.
+    in 2x: share of solved tasks whose estimate is between half and double the actual tokens.
+    est cost / cost: median cost in competition units, estimated (current report format only) / actual.
+    steps: median steps estimated / model calls made.
+    right: tasks answered correctly, or left unanswered when unsolvable.
+    """
+    groups = {}
+    for task_json in sorted(Path(tasks_dir).glob("*/task.json")):
+        meta = json.loads(task_json.read_text(encoding="utf-8"))
+        entry = run_report["tasks"].get(meta["task_id"])
+        if entry is None:
+            continue
+        g = groups.setdefault(_group(meta), {"n": 0, "infeasible": 0, "planned": 0, "outcomes": {}, "est": [],
+                                             "actual": [], "ratio": [], "cost": [], "est_cost": [], "steps": [],
+                                             "calls": [], "right": 0})
+        g["n"] += 1
+        g["right"] += check_task(task_json.parent)[0] in (CORRECT, SKIPPED_OK)
+        tokens, costs, steps, infeasible = _judge_view(entry["judge"])
+        g["infeasible"] += infeasible
+        planned = entry.get("planned_model")
+        estimate = tokens.get(planned) if planned else (statistics.median(tokens.values()) if tokens else None)
+        if estimate is not None:
+            g["est"].append(estimate)
+        if planned in costs:
+            g["est_cost"].append(costs[planned])
+        if steps is not None:
+            g["steps"].append(steps)
+        solve = entry.get("solve")
+        if not planned or not solve:
+            continue
+        g["planned"] += 1
+        g["outcomes"][solve["outcome"]] = g["outcomes"].get(solve["outcome"], 0) + 1
+        actual = sum(a["input_tokens"] + a["output_tokens"] for a in solve["attempts"])
+        g["cost"].append(sum(a["cost"] for a in solve["attempts"]))
+        g["calls"].append(sum(a["calls"] for a in solve["attempts"]))
+        if actual and estimate is not None:  # an estimate of 0 tokens counts, as ratio 0
+            g["actual"].append(actual)
+            g["ratio"].append(estimate / actual)
+
+    def med(values, fmt="{:.0f}"):
+        return fmt.format(statistics.median(values)) if values else "-"
+
+    lines = [f"{'group':<30} {'n':>3} {'infeas':>6} {'plan':>4} {'est tok':>8} {'actual':>8} {'ratio':>6} "
+             f"{'in 2x':>6} {'est cost':>8} {'cost':>6} {'steps':>7} {'right':>6}  outcomes"]
+    for name, g in sorted(groups.items()):
+        within = f"{sum(0.5 <= r <= 2 for r in g['ratio']) / len(g['ratio']):.0%}" if g["ratio"] else "-"
+        outcomes = ", ".join(f"{k} {v}" for k, v in sorted(g["outcomes"].items()))
+        steps = f"{med(g['steps'])}/{med(g['calls'])}"
+        lines.append(f"{name:<30} {g['n']:>3} {g['infeasible']:>6} {g['planned']:>4} {med(g['est']):>8} "
+                     f"{med(g['actual']):>8} {med(g['ratio'], '{:.2f}'):>6} {within:>6} {med(g['est_cost']):>8} "
+                     f"{med(g['cost']):>6} {steps:>7} {str(g['right']) + '/' + str(g['n']):>6}  {outcomes}")
+    return lines
+
+
 def main():
-    report = score_tasks(sys.argv[1] if len(sys.argv) > 1 else "task-dir")
+    args = sys.argv[1:]
+    report_path = None
+    if "--report" in args:
+        at = args.index("--report")
+        report_path = args[at + 1]
+        del args[at:at + 2]
+    report = score_tasks(args[0] if args else "task-dir")
     for r in report["tasks"]:
         print(f"{r['task_id']:<22} {r['status']:<20} {r['points']}/{r['reward']}  {r['detail']}")
     print("\n" + summary_line(report))
+    if report_path:
+        print()
+        for line in estimate_table(args[0] if args else "task-dir",
+                                   json.loads(Path(report_path).read_text(encoding="utf-8"))):
+            print(line)
 
 
 if __name__ == "__main__":
