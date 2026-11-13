@@ -1,0 +1,13 @@
+.git
+.idea
+.venv
+.env
+.env.*
+!.env.example
+__pycache__
+*.pyc
+main.log
+solutions.json
+task-dir
+task-dir-final
+task-dir-final-run
