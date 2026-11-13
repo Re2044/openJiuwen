@@ -18,37 +18,37 @@ The solver changes task files, so work on a copy (`*-run/` is gitignored):
 
 ```bash
 cp -r test-suites/judge-complex test-suites/judge-complex-run
-TASKS=./test-suites/judge-complex-run OUT=runs/judge-complex/solutions.json BUDGET=60000 python main.py
+TASKS=./test-suites/judge-complex-run OUT=runs/judge-complex/solutions.json BUDGET=60000 \
+  TRAJECTORIES=runs/judge-complex/trajectories.jsonl python main.py
 ```
 
-`main.py` writes `run_report.json` next to the solutions file. It holds, for every task:
-- every model's estimate from the judge;
-- the model in the plan;
-- what solving took, attempt by attempt.
-
-The log ends with a table per group of tasks (task type plus `trap` or `difficulty`). The same table is printed by:
+With `TRAJECTORIES` set, the run appends one line per task to that file: the planned model, the estimated and the
+actual cost and time, and whether it was answered. `evaluate.py` scores the answers and, given that file, prints a
+table per group of tasks (task type plus `trap` or `difficulty`):
 
 ```bash
-python evaluate.py test-suites/judge-complex-run --report runs/judge-complex/run_report.json
+python evaluate.py test-suites/judge-complex-run --report runs/judge-complex/trajectories.jsonl
 ```
 
 | Column | Meaning |
 |---|---|
-| `infeas` | tasks every model's estimate called infeasible (-1) |
-| `plan` | tasks the plan included |
-| `est tok` / `actual` | median tokens the judge estimated / that solving used (input + output) |
-| `ratio` | median estimate ÷ actual; above 1 the judge overestimates |
-| `in 2x` | share of solved tasks whose estimate is within half to double the actual |
-| `cost` | median cost per task in competition units (output + input / 10) |
+| `tried` | tasks the run worked on: planned, or picked up in the second pass |
+| `est` / `actual` | median cost per task in budget units (output + input / 10): estimated / spent |
+| `ratio` | median estimate ÷ actual; above 1 the estimate is too high |
+| `in 2x` | share of tried tasks whose estimate is within half to double the actual |
+| `answered` | tasks that got an answer |
 | `right` | answered correctly, or left unanswered when unsolvable |
+
+The estimates come from the judge when `USE_JUDGE=1`, otherwise from the per-type table in `config.py`
+(`COST_BY_TASK_TYPE`), which only distinguishes task types, not difficulty within a type.
 
 ## Suites
 
 | Suite | Tasks | What it tests | Look at |
 |---|---|---|---|
-| `judge-complex` | 20, all solvable | Instructions full of jargon or long step-by-step procedures, but one short command solves each task. All of them fit easily within any normal budget. | `ratio` well above 1, `infeas` > 0 or tasks missing from the plan mean the judge was fooled. |
-| `easy-impossible` | 20, all unsolvable | Short, easy-looking questions whose data is missing or unusable (see below). | `cost` (tokens burnt before giving up) and `right` (no guessed answer). |
-| `math-levels` | 15: 5 easy, 5 medium, 5 hard | easy: 1–2 operations; medium: 4–6; hard: 10–14, including percentages, caps and conditions. | Whether `est tok`, `actual` and `cost` grow with difficulty, and whether `right` drops. |
+| `judge-complex` | 20, all solvable | Instructions full of jargon or long step-by-step procedures, but one short command solves each task. All of them fit easily within any normal budget. Run with `USE_JUDGE=1`: `ratio` well above 1, or tasks missing from the plan, mean the judge was fooled. |
+| `easy-impossible` | 20, all unsolvable | Short, easy-looking questions whose data is missing or unusable (see below). | `actual` (cost burnt before giving up) and `right` (no guessed answer). |
+| `math-levels` | 15: 5 easy, 5 medium, 5 hard | easy: 1–2 operations; medium: 4–6; hard: 10–14, including percentages, caps and conditions. | Whether `est` and `actual` grow with difficulty, and whether `right` drops. |
 | `data-levels` | 15 | easy: 20 rows, one filter; medium: 300 rows, two filters or revenue; hard: about 3,000 messy lines (product names that differ in case and spacing, duplicate orders), with a best-region, weighted-average or count-distinct question. | as above |
 | `search-levels` | 15 | easy: a direct field, 10 people; medium: one hop, 30 people; hard: two or three hops through mentors, 120 people, with a decoy "Former employer" field. | as above |
 | `coding-levels` | 15 | easy: 2–3 functions, 1 bug; medium: 5–7 functions, 2–3 bugs; hard: binary search, interval merging, Roman numerals, run-length encoding, flattening or word counts, with 2–3 subtler bugs. | as above |

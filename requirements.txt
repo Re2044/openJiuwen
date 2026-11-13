@@ -1,4 +1,7 @@
-openai==3.46.0
+# Direct dependencies, pinned. constraints.txt pins everything they pull in.
+-c constraints.txt
+openai==3.50.0
 openjiuwen==0.1.20
 python-dotenv==1.2.4
 numpy==2.5.4
+pydantic==2.14.3

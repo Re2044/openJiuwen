@@ -1,9 +1,13 @@
 .git
+.idea
 .venv
 .env
-*.log
+.env.*
+!.env.example
 __pycache__
+*.pyc
+main.log
 solutions.json
-run_report.json
-task-dir*
-test-suites
+task-dir
+task-dir-final
+task-dir-final-run
